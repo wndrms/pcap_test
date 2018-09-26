@@ -1,5 +1,21 @@
-#include <pcap.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
+#include <netinet/in.h>
+#include <net/ethernet.h>
+#include <pcap/pcap.h>
+#include <signal.h>
+#include <errno.h>
+#include <unistd.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
+#include <netinet/ip_icmp.h>
+#include <arpa/inet.h>
+
+struct ip *ip_header;
+struct tcphdr *tcp_header;
 
 void dump(u_char* p, int len){
 	for(int i=0; i<len; i++){
@@ -9,33 +25,56 @@ void dump(u_char* p, int len){
 	}
 	printf("\n");
 }
-void Eth_Mac(u_char* p){
-	printf("Src MAC : ");
-	printf("%02x", p[0]);
-	for(int i=1; i<6; i++) printf(":%02x", p[i]);
+void analysis(const u_char *p, int len){
+	struct ether_header *e_header;
+	int ether_type;
+	
+	e_header = (struct ether_header *)p;
+	p += sizeof(struct ether_header);
+	ether_type = ntohs(e_header->ether_type);
+	
+	printf("------Ether Header------\n");
+	printf("Src Mac : ");
+	printf("%02X", e_header->ether_shost[0]);
+	for(int i=1; i<6; i++){
+		printf(":%02X", e_header->ether_shost[i]);
+	}
 	printf("\n");
-	printf("Dst MAC : ");
-	printf("%02x", p[6]);
-	for(int i=7; i<12; i++) printf(":%02x", p[i]);
+
+	printf("Dst Mac : ");
+	printf("%02X", e_header->ether_dhost[0]);
+	for(int i=1; i<6; i++){
+		printf(":%02X", e_header->ether_dhost[i]);
+	}
 	printf("\n");
+	printf("----------------------\n");
+	
+	
+	if(ether_type == ETHERTYPE_IP){
+		printf("------IP Header------\n");
+		ip_header = (struct ip *)p;
+		printf("Src Address : %s\n", inet_ntoa(ip_header->ip_src));
+        printf("Dst Address : %s\n", inet_ntoa(ip_header->ip_dst));
+        printf("----------------------\n");
+        if(ip_header -> ip_p == IPPROTO_TCP){
+        	printf("------TCP Header------\n");
+        	tcp_header = (struct tcphdr *)(p + ip_header->ip_hl * 4);
+            printf("Src Port : %d\n" , ntohs(tcp_header->source));
+            printf("Dst Port : %d\n" , ntohs(tcp_header->dest));
+            
+			int i=0;
+            int offset = ip_header->ip_hl+tcp_header->th_off;
+            int length = len - sizeof(struct ether_header) - offset*4;
+            p += offset*4;
+			while(length-- && i<16){
+	            printf("%02x ", *(p++)); 
+	            if ((++i % 16) == 0) 
+	                printf("\n");
+	        }
+		}
+	}
 }
 
-void ip(u_char* p){
-	printf("Src ip : ");
-	printf("%d", p[26]);
-	for(int i=27; i<30; i++) printf(".%d", p[i]);
-	printf("\n");
-	printf("Dst ip : ");
-	printf("%d", p[30]);
-	for(int i=31; i<34; i++) printf(".%d", p[i]);
-	printf("\n");
-}
-void tcp_port(u_char* p){
-	printf("tcp_Src port : ");
-	printf("%d\n", p[34]*256+p[35]);
-	printf("tcp_Dst port : ");
-	printf("%d\n", p[36]*256+p[37]);
-}
 void usage() {
   printf("syntax: pcap_test <interface>\n");
   printf("sample: pcap_test wlan0\n");
@@ -64,26 +103,9 @@ int main(int argc, char* argv[]) {
     if (res == -1 || res == -2) break;
     printf("%u bytes captured\n", header->caplen);
     //dump((u_char*)packet, header->caplen);
-	Eth_Mac((u_char*)packet);
-	if(packet[12] == 0x08 && packet[13] == 0x00){
-		 printf("ip type : ipv4\n");
-		 ip((u_char*)packet);
-		 if(packet[23] == 0x06){
-			 printf("protocol : TCP\n");
-			 tcp_port((u_char*)packet);
-			 if(packet[34+packet[46]]!=NULL){
-				for(int i=0; i<32 && packet[34+packet[46]+i]!=NULL; i++){
-					printf("%02x ", packet[34+packet[46]+i]);
-					if(i%16==15) printf("\n");
-				}
-				printf("\n");
-			 }
-			 else continue;
-		 }
-		 else continue;
-	}
-	else continue;
-	
+    	
+	analysis((u_char*)packet, header->caplen);
+	printf("\n");
   }
 
   pcap_close(handle);
